@@ -14,21 +14,34 @@ def api_get(path, params=None):
     headers = {"x-api-key": API_KEY}
     response = requests.get(url, headers=headers, params=params)
     response.raise_for_status()
-    return response.json()  # TODO: return the response body as a dictionary
+    return response.json()
 
-def list_datastores():
-    datastores = []
-    cursor = None
+def paginate(path, items_key, params=None):
+    params = dict(params or {})
+    items = []
     while True:
-        params = {"cursor": cursor} if cursor else {}
-        data = api_get("standard-datastores", params)
-        datastores.extend(data["datastores"])
+        data = api_get(path, params)
+        items.extend(data[items_key])
         cursor = data.get("nextPageCursor")
         if not cursor:
-            break
-    return datastores
+            return items
+        params["cursor"] = cursor
+
+
+def list_datastores():
+    return paginate("standard-datastores", "datastores")
+
+def list_keys(datastore_name):
+    return paginate(
+        "standard-datastores/datastore/entries",
+        "keys",
+        {"datastoreName": datastore_name},
+    )
 
 
 if __name__ == "__main__":
     for ds in list_datastores():
         print(ds["name"])
+    print("---")
+    for entry in list_keys("Data_4"):
+        print(entry["key"])
