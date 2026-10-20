@@ -11,11 +11,25 @@ BASE_URL = "https://apis.roblox.com/datastores/v1/universes"
 
 def list_datastores():
     url = f"{BASE_URL}/{UNIVERSE_ID}/standard-datastores"
-    headers = {...}  # TODO: put the API key in the right header
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()  # raises an error on 4xx/5xx
-    return response.json()
+    headers = {"x-api-key": API_KEY}
+    datastores = []
+    cursor = None
+
+    while True:
+        params = {}
+        if cursor:
+            params["cursor"] = cursor  # TODO
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
+        datastores.extend(data["datastores"])  # TODO: add this page's items
+        cursor = data.get("nextPageCursor")
+        if not cursor:
+            break
+
+    return datastores
 
 
 if __name__ == "__main__":
-    print(list_datastores())
+    for ds in list_datastores():
+        print(ds["name"])
