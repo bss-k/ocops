@@ -1,5 +1,7 @@
 import os
 import requests
+import argparse
+import json
 from dotenv import load_dotenv
 
 load_dotenv()  # reads .env into environment variables
@@ -38,10 +40,48 @@ def list_keys(datastore_name):
         {"datastoreName": datastore_name},
     )
 
+def get_entry(datastore_name, key):
+    return api_get(
+        "standard-datastores/datastore/entries/entry",
+        {"datastoreName": datastore_name, "entryKey": key},  # TODO: which variable holds the key?
+    )
 
-if __name__ == "__main__":
+
+def cmd_datastores(args):
     for ds in list_datastores():
         print(ds["name"])
-    print("---")
-    for entry in list_keys("Data_4"):
+
+def cmd_keys(args):
+    keys = list_keys(args.datastore)
+    for entry in keys[: args.limit]:  # slicing with None returns everything
         print(entry["key"])
+
+def cmd_get(args):
+    value = get_entry(args.datastore, args.key)  # TODO: fetch the entry using args.datastore and args.key
+    print(json.dumps(value, indent=2))
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="ocops", description="Roblox Open Cloud ops CLI")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("datastores", help="list DataStores")
+    p.set_defaults(func=cmd_datastores)
+
+    p = sub.add_parser("keys", help="list keys in a DataStore")
+    p.add_argument("datastore")
+    p.add_argument("--limit", type=int, help="show only the first N keys")
+    p.set_defaults(func=cmd_keys)
+
+    p = sub.add_parser("get", help="read one entry")
+    p.add_argument("datastore")
+    p.add_argument("key")
+    p.set_defaults(func=cmd_get)
+
+    return parser
+
+def main():
+    args = build_parser().parse_args()
+    args.func(args)
+
+if __name__ == "__main__":
+    main()
