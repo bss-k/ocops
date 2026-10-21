@@ -3,6 +3,8 @@ import sys
 import requests
 import argparse
 import json
+import random
+import time
 
 from datetime import datetime, timezone
 from dotenv import load_dotenv
@@ -14,6 +16,8 @@ AUDIT_FILE = "audit.jsonl"
 BASE_URL = "https://apis.roblox.com/datastores/v1/universes"
 PROFILES = ("test", "prod")
 _active = {}
+RETRY_STATUSES = {429, 500, 502, 503, 504}
+MAX_ATTEMPTS = 5
 
 class ApiError(Exception):
     def __init__(self, status, text):
@@ -26,15 +30,36 @@ def load_profile(name):
     _active["api_key"] = os.environ[f"{prefix}_API_KEY"]
     _active["universe_id"] = os.environ[f"{prefix}_UNIVERSE_ID"]
 
+
+def backoff_delay(attempt, response=None):
+    retry_after = response.headers.get("Retry-After") if response is not None else None
+    if retry_after and retry_after.isdigit():
+        return int(retry_after)
+    return (2 ^ attempt) + random.random()  # TODO: 2 to the power of attempt, capped at 30
+
+
 def api_request(method, path, params=None, body=None):
     url = f"{BASE_URL}/{_active['universe_id']}/{path}"
     headers = {"x-api-key": _active['api_key']}
-    response = requests.request(
-        method, url, headers=headers, params=params, json=body, timeout=30
-    )
+    for attempt in range(MAX_ATTEMPTS):
+        last = attempt == MAX_ATTEMPTS - 1
+        try:
+            response = requests.request(
+                method, url, headers=headers, params=params, json=body, timeout=30
+            )
+        except (requests.ConnectionError, requests.Timeout) as e:
+            if last:
+                raise
+            print(f"[retry {attempt + 1}] {type(e).__name__}", file=sys.stderr)
+            time.sleep(backoff_delay(attempt))
+            continue
+        if response.status_code in RETRY_STATUSES and not last:
+            print(f"[retry {attempt + 1}] HTTP {response.status_code}", file=sys.stderr)
+            time.sleep(backoff_delay(attempt, response))
+            continue
+        break
     if not response.ok:
         raise ApiError(response.status_code, response.text)
-    
     if not response.content:
         return None
     return response.json()
@@ -143,7 +168,7 @@ def add_write_args(p):
     p.add_argument("datastore")
     p.add_argument("key")
     p.add_argument("--dry-run", action="store_true")
-    
+
 
 def build_parser():
     parser = argparse.ArgumentParser(prog="ocops", description="Roblox Open Cloud ops CLI")
