@@ -1,4 +1,5 @@
 import os
+import sys
 import requests
 import argparse
 import json
@@ -6,14 +7,21 @@ from dotenv import load_dotenv
 
 load_dotenv()  # reads .env into environment variables
 
-API_KEY = os.environ["PLACE_API_KEY"]
-UNIVERSE_ID = os.environ["UNIVERSE_ID"]
+
 BASE_URL = "https://apis.roblox.com/datastores/v1/universes"
+PROFILES = ("test", "prod")
+_active = {}
+
+def load_profile(name):
+    prefix = name.upper()
+    _active["name"] = prefix
+    _active["api_key"] = os.environ[f"{prefix}_API_KEY"]
+    _active["universe_id"] = os.environ[f"{prefix}_UNIVERSE_ID"]
 
 def api_get(path, params=None):
     """Send an authenticated GET to the Open Cloud API and return the parsed JSON."""
-    url = f"{BASE_URL}/{UNIVERSE_ID}/{path}"
-    headers = {"x-api-key": API_KEY}
+    url = f"{BASE_URL}/{_active['universe_id']}/{path}"
+    headers = {"x-api-key": _active['api_key']}
     response = requests.get(url, headers=headers, params=params)
     response.raise_for_status()
     return response.json()
@@ -64,6 +72,8 @@ def build_parser():
     parser = argparse.ArgumentParser(prog="ocops", description="Roblox Open Cloud ops CLI")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    parser.add_argument("--profile", choices=PROFILES, default="test")
+
     p = sub.add_parser("datastores", help="list DataStores")
     p.set_defaults(func=cmd_datastores)
 
@@ -81,6 +91,8 @@ def build_parser():
 
 def main():
     args = build_parser().parse_args()
+    load_profile(args.profile)
+    print(f"[profile: {args.profile}]", file=sys.stderr)
     args.func(args)
 
 if __name__ == "__main__":
