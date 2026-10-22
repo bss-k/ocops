@@ -2,3 +2,10 @@
 .venv/
 __pycache__/
 .vscode/
+.pytest_cache/
+audit.jsonl
+*.egg-info/
+build/
+dist/
+.coverage
+htmlcov/

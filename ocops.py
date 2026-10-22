@@ -7,14 +7,14 @@ import random
 import time
 
 from datetime import datetime, timezone
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
-load_dotenv()  # reads .env into environment variables
+load_dotenv(find_dotenv(usecwd=True))  # reads .env from the folder you run the command in
 
-SAFE_PREFIX = "ocops_"
+SAFE_PREFIX = os.environ.get("OCOPS_SAFE_PREFIX") or "ocops_"  # DataStore names ocops may write to
 AUDIT_FILE = "audit.jsonl"
 BASE_URL = "https://apis.roblox.com/datastores/v1/universes"
-V2_BASE = "https://apis.roblox.com/cloud/v2/universes/{id}/user-restrictions"
+V2_BASE = "https://apis.roblox.com/cloud/v2/universes"
 PROFILES = ("test", "prod")
 _active = {}
 RETRY_STATUSES = {429, 500, 502, 503, 504}
@@ -27,7 +27,7 @@ class ApiError(Exception):
 
 def load_profile(name):
     prefix = name.upper()
-    _active["name"] = prefix
+    _active["name"] = name
     _active["api_key"] = os.environ[f"{prefix}_API_KEY"]
     _active["universe_id"] = os.environ[f"{prefix}_UNIVERSE_ID"]
 
@@ -36,7 +36,7 @@ def backoff_delay(attempt, response=None):
     retry_after = response.headers.get("Retry-After") if response is not None else None
     if retry_after and retry_after.isdigit():
         return int(retry_after)
-    return (2 ^ attempt) + random.random()  # 2 to the power of attempt, capped at 30
+    return min(2 ** attempt, 30) + random.random()
 
 
 def api_request(method, path, params=None, body=None, base=BASE_URL):
@@ -206,7 +206,7 @@ def cmd_restore(args):
     record = last_audit(args.datastore, args.key)
     if record is None:
         sys.exit("No audit record for that entry.")
-    apply_change("restore", args.datastore, args.key, ..., args.dry_run)  # TODO: which field holds the value to put back?
+    apply_change("restore", args.datastore, args.key, record["old"], args.dry_run)
 
 def cmd_ban(args):
     require_not_protected(args.user_id)
@@ -217,7 +217,7 @@ def cmd_ban(args):
         "excludeAltAccounts": False,
     }
     if args.hours:
-        restriction["duration"] = ...  # TODO: seconds as a string, e.g. "3600s"
+        restriction["duration"] = f"{args.hours * 3600}s"
     apply_restriction("ban", args.user_id, restriction, args.dry_run)
 
 
@@ -306,7 +306,7 @@ def audit(action, datastore, key, old, new):
         "old": old,
         "new": new,
     }
-    with open(AUDIT_FILE, "a") as f:  # TODO: what does mode "a" do?
+    with open(AUDIT_FILE, "a") as f:  # "a" = append: never overwrites earlier records
         f.write(json.dumps(record) + "\n")
 
 def last_audit(datastore, key):
@@ -327,7 +327,7 @@ def confirm_prod(summary):
     if _active["name"] != "prod":
         return
     answer = input(f"PROD: {summary}\nType 'prod' to continue: ")
-    if answer != "prod":  # TODO: compare against the right string
+    if answer != "prod":
         sys.exit("Aborted.")
 
 def main():

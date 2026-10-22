@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ocops"
+version = "0.1.0"
+description = "Safety-first ops and moderation CLI for Roblox Open Cloud"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+dependencies = ["requests>=2.28", "python-dotenv>=1.0"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+ocops = "ocops:main"
+
+[tool.setuptools]
+py-modules = ["ocops"]
