@@ -14,6 +14,7 @@ load_dotenv()  # reads .env into environment variables
 SAFE_PREFIX = "ocops_"
 AUDIT_FILE = "audit.jsonl"
 BASE_URL = "https://apis.roblox.com/datastores/v1/universes"
+V2_BASE = "https://apis.roblox.com/cloud/v2/universes/{id}/user-restrictions"
 PROFILES = ("test", "prod")
 _active = {}
 RETRY_STATUSES = {429, 500, 502, 503, 504}
@@ -35,11 +36,11 @@ def backoff_delay(attempt, response=None):
     retry_after = response.headers.get("Retry-After") if response is not None else None
     if retry_after and retry_after.isdigit():
         return int(retry_after)
-    return (2 ^ attempt) + random.random()  # TODO: 2 to the power of attempt, capped at 30
+    return (2 ^ attempt) + random.random()  # 2 to the power of attempt, capped at 30
 
 
-def api_request(method, path, params=None, body=None):
-    url = f"{BASE_URL}/{_active['universe_id']}/{path}"
+def api_request(method, path, params=None, body=None, base=BASE_URL):
+    url = f"{base}/{_active['universe_id']}/{path}"
     headers = {"x-api-key": _active['api_key']}
     for attempt in range(MAX_ATTEMPTS):
         last = attempt == MAX_ATTEMPTS - 1
@@ -76,16 +77,17 @@ def set_entry(datastore, key, value):
         body=value
     )
 
-def paginate(path, items_key, params=None):
+def paginate(path, items_key, params=None, base=BASE_URL,
+             token_param="cursor", next_key="nextPageCursor"):
     params = dict(params or {})
     items = []
     while True:
-        data = api_get(path, params)
-        items.extend(data[items_key])
-        cursor = data.get("nextPageCursor")
-        if not cursor:
+        data = api_request("GET", path, params, base=base)
+        items.extend(data.get(items_key, []))
+        token = data.get(next_key)
+        if not token:
             return items
-        params["cursor"] = cursor
+        params[token_param] = token  # TODO: same bookmark idea, new parameter name
 
 
 def list_datastores():
@@ -111,9 +113,52 @@ def delete_entry(datastore_name, key):
         {"datastoreName": datastore_name, "entryKey": key},
     )
 
+
+
 def require_safe(datastore):
     if not datastore.startswith(SAFE_PREFIX):
         sys.exit(f"Refusing to write: DataStore must start with '{SAFE_PREFIX}'.")
+
+
+def require_not_protected(user_id):
+    protected = {s for s in os.environ.get("PROTECTED_USER_IDS", "").split(",") if s}
+    if str(user_id) in protected:
+        sys.exit(f"Refusing: user {user_id} is protected.")
+
+
+def list_restrictions():
+    return paginate("user-restrictions", "userRestrictions", base=V2_BASE,
+                    token_param="pageToken", next_key="nextPageToken")
+
+
+def get_restriction_or_none(user_id):
+    try:
+        return api_request("GET", f"user-restrictions/{user_id}", base=V2_BASE)
+    except ApiError as e:
+        if e.status == 404:
+            return None
+        raise
+
+
+def patch_restriction(user_id, restriction):
+    return api_request(
+        "PATCH",
+        f"user-restrictions/{user_id}",
+        {"updateMask": "gameJoinRestriction"},
+        body={"gameJoinRestriction": restriction},
+        base=V2_BASE,
+    )
+
+def apply_restriction(action, user_id, restriction, dry_run):
+    old = get_restriction_or_none(user_id)
+    print(f"user {user_id}\n  old: {old}\n  new: {restriction}")
+    if dry_run:
+        print("[dry-run] nothing written")
+        return
+    confirm_prod(f"{action} user {user_id}")
+    patch_restriction(user_id, restriction)
+    audit(action, "user-restrictions", str(user_id), old, restriction)
+
 
 def apply_change(action, datastore, key, new, dry_run):
     """Guard, show diff, dry-run, confirm, write, audit. new=None means delete."""
@@ -163,6 +208,27 @@ def cmd_restore(args):
         sys.exit("No audit record for that entry.")
     apply_change("restore", args.datastore, args.key, ..., args.dry_run)  # TODO: which field holds the value to put back?
 
+def cmd_ban(args):
+    require_not_protected(args.user_id)
+    restriction = {
+        "active": True,
+        "privateReason": args.reason,
+        "displayReason": args.display_reason,
+        "excludeAltAccounts": False,
+    }
+    if args.hours:
+        restriction["duration"] = ...  # TODO: seconds as a string, e.g. "3600s"
+    apply_restriction("ban", args.user_id, restriction, args.dry_run)
+
+
+def cmd_unban(args):
+    apply_restriction("unban", args.user_id, {"active": False}, args.dry_run)
+
+
+def cmd_bans(args):
+    for r in list_restrictions():
+        g = r.get("gameJoinRestriction", {})
+        print(r["path"].split("/")[-1], g.get("active"), g.get("duration", "permanent"), g.get("privateReason"))
 
 def add_write_args(p):
     p.add_argument("datastore")
@@ -201,6 +267,23 @@ def build_parser():
     p = sub.add_parser("restore", help="undo the last change to an entry")
     add_write_args(p)
     p.set_defaults(func=cmd_restore)
+
+
+    p = sub.add_parser("ban", help="ban a user from the game")
+    p.add_argument("user_id", type=int)
+    p.add_argument("--reason", required=True, help="private reason (for you)")
+    p.add_argument("--display-reason", default="Violation of game rules")
+    p.add_argument("--hours", type=int, help="omit for a permanent ban")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(func=cmd_ban)
+
+    p = sub.add_parser("unban", help="lift a ban")
+    p.add_argument("user_id", type=int)
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(func=cmd_unban)
+
+    p = sub.add_parser("bans", help="list restrictions")
+    p.set_defaults(func=cmd_bans)
 
     return parser
 
