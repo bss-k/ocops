@@ -89,3 +89,20 @@ def test_safe_prefix_can_be_overridden(monkeypatch):
     ocops.require_safe("mygame_data")  # allowed
     with pytest.raises(SystemExit):
         ocops.require_safe("ocops_data")
+
+def test_ban_rejects_zero_hours():
+    args = ocops.build_parser().parse_args(["ban", "123", "--reason", "x", "--hours", "0"])
+    with pytest.raises(SystemExit):
+        args.func(args)
+
+def test_set_rejects_null(fake_api):
+    args = ocops.build_parser().parse_args(["set", "ocops_x", "k", "null"])
+    with pytest.raises(SystemExit):
+        args.func(args)
+    assert fake_api[1] == []  # no API calls were made
+
+
+def test_set_rejects_invalid_json():
+    args = ocops.build_parser().parse_args(["set", "ocops_x", "k", "{coins:1}"])
+    with pytest.raises(SystemExit):
+        args.func(args)

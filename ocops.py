@@ -195,7 +195,13 @@ def cmd_get(args):
 
 
 def cmd_set(args):
-    apply_change("set", args.datastore, args.key, json.loads(args.value), args.dry_run)
+    try:
+        value = json.loads(args.value)
+    except json.JSONDecodeError:
+        sys.exit("Value must be valid JSON, e.g. '{\"coins\": 100}'")
+    if value is None: # Null value
+        sys.exit("Refusing to set null; use 'ocops delete' to remove an entry.")
+    apply_change("set", args.datastore, args.key, value, args.dry_run)
 
 
 def cmd_delete(args):
@@ -216,7 +222,9 @@ def cmd_ban(args):
         "displayReason": args.display_reason,
         "excludeAltAccounts": False,
     }
-    if args.hours:
+    if args.hours is not None:
+        if args.hours <= 0:
+            sys.exit("hours must be > 0")
         restriction["duration"] = f"{args.hours * 3600}s"
     apply_restriction("ban", args.user_id, restriction, args.dry_run)
 
